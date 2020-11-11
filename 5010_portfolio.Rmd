@@ -1,0 +1,176 @@
+---
+title: "5010_portfolio"
+author: "Haolin Shao, Yakun Wang, Jiawei He, and Tianying Han"
+date: "2019/10/28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load library}
+library(quadprog)
+library(riskParityPortfolio)
+```
+
+```{r setu_p}
+source("5010_function.r")
+Bear <- read.csv("bear_stock_return.csv")
+Bull <- read.csv("bull_stock_return.csv")
+bear_exp_return <- 0.05
+bull_exp_return <- 0.15
+rf <- 0.025
+```
+
+## Equal Dollar
+```{r}
+equal_dollar <- function(df){
+  n <- ncol(df) - 1
+  return(rep(1/n, n))
+}
+
+bear_equal_dollar <- iteration(Bear, equal_dollar)
+bear_equal_dollar
+bull_equal_dollar <- iteration(Bull, equal_dollar)
+bull_equal_dollar
+```
+
+## Equal Weighted Risk
+```{r}
+equal_risk <- function(df){
+  cov_mat <- cov(df[,-1])
+  weight <- riskParityPortfolio(cov_mat)$w
+  return(weight)
+}
+
+bear_equal_risk <- iteration(Bear, equal_risk)
+bear_equal_risk
+bull_equal_risk <- iteration(Bull, equal_risk)
+bull_equal_risk
+```
+
+## Markowitz: Minimum Variance
+```{r}
+min_var <- function(df){
+  mu <- colMeans(df[,-1])
+  sigma <- cov(df[,-1])
+  n <- ncol(df)-1
+  weight <- matrix(0, nrow = 10000, ncol = n)
+  muP <- seq(-0.03, 0.03, length = 10000) 
+  sdP <- seq(-0.03, 0.03, length = 10000) 
+  
+  for (i in 1:length(muP)){
+    result <- solve.QP(Dmat = 2*sigma, 
+                       dvec = rep(0,n), 
+                       Amat = cbind(rep(1,n), mu), 
+                       bvec = c(1, muP[i]), 
+                       meq = 2)
+    
+    weight[i,] <- result$solution
+    sdP[i] <- sqrt(result$value)
+  }
+  
+  ind <- (sdP == min(sdP))
+  min_var_weight <- weight [ind, ]
+  return(min_var_weight)
+}
+
+bear_min_var <- iteration(Bear, min_var)
+bear_min_var
+bull_min_var <- iteration(Bull, min_var)
+bull_min_var
+```
+
+## Markowitz: Tangency Portfolio
+```{r}
+tangency_portfolio <- function(df){
+  n<-ncol(df)-1
+  mu <- colMeans(df[, -1])
+  sigma <- cov(df[, -1])
+  weight <- matrix(0, nrow = 10000, ncol = n)
+  muP <- seq(-0.03, 0.03, length = 10000) 
+  sdP <- seq(-0.03, 0.03, length = 10000) 
+  
+  for (i in 1:length(muP)){
+    result <- solve.QP(Dmat = 2*sigma, 
+                       dvec = rep(0,n),
+                       Amat = cbind(rep(1,n), mu), 
+                       bvec = c(1, muP[i]), 
+                       meq = 2)
+    
+    weight[i,] <- result$solution
+    sdP[i] <- sqrt(result$value)
+  } 
+  
+  sharpe <- (muP-rf/365)/sdP 
+  ind2 <- (sharpe == max(sharpe))
+  tf_weight <- weight[ind2, ]
+  return(tf_weight)
+}
+
+bear_tangent <- iteration(Bear, tangency_portfolio)
+bear_tangent
+bull_tangent <- iteration(Bull, tangency_portfolio)
+bull_tangent
+```
+
+## Markowitz: Tangency Portfolio with Risk-Free Asset
+```{r}
+tangent_with_rf_bull <- function(df, expected.return = bull_exp_return){
+  mu <- colMeans(df[,-1])
+  weight <- tangency_portfolio(df)
+  result <- list(stocks = weight,
+                 rf = (expected.return/365 - weight %*% mu)/(rf/365 - weight %*% mu))
+  return(result)
+}
+
+tangent_with_rf_bear <- function(df, expected.return = bear_exp_return){
+  weight <- tangency_portfolio(df)
+  mu <- colMeans(df[,-1])
+  result <- list(stocks = weight,
+                 rf = (expected.return/365 - weight %*% mu)/(rf/365 - weight %*% mu))
+  return(result)
+}
+
+bear_tangent_rf <- iteration(Bear, tangent_with_rf_bear, rf.include = TRUE)
+bear_tangent_rf
+bull_tangent_rf <- iteration(Bull, tangent_with_rf_bull, rf.include = TRUE)
+bull_tangent_rf
+```
+
+```{r}
+## bear
+result.bear <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+
+result.bear$return <- rbind(bear_equal_dollar$Return, bear_equal_risk$Return, bear_min_var$Return,
+                            bear_tangent$Return, bear_tangent_rf$Return)
+
+result.bear$risk <- rbind(bear_equal_dollar$Risk, bear_equal_risk$Risk, bear_min_var$Risk,
+                          bear_tangent$Risk, bear_tangent_rf$Risk)
+
+result.bear$sharpe.ratio <- rbind(bear_equal_dollar$sharpe_ratio, bear_equal_risk$sharpe_ratio,
+                                  bear_min_var$sharpe_ratio, bear_tangent$sharpe_ratio,
+                                  bear_tangent_rf$sharpe_ratio)
+
+write.csv(result.bear$return, "bear_result_return.csv")
+write.csv(result.bear$risk, "bear_result_risk.csv")
+write.csv(result.bear$sharpe.ratio, "bear_result_sharperatio.csv")
+
+## bull
+result.bull <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+
+result.bull$return <- rbind(bull_equal_dollar$Return, bull_equal_risk$Return, bull_min_var$Return,
+                            bull_tangent$Return, bull_tangent_rf$Return)
+
+result.bull$risk <- rbind(bull_equal_dollar$Risk, bull_equal_risk$Risk, bull_min_var$Risk,
+                          bull_tangent$Risk, bull_tangent_rf$Risk)
+
+result.bull$sharpe.ratio <- rbind(bull_equal_dollar$sharpe_ratio, bull_equal_risk$sharpe_ratio,
+                                  bull_min_var$sharpe_ratio, bull_tangent$sharpe_ratio,
+                                  bull_tangent_rf$sharpe_ratio)
+
+write.csv(result.bull$return, "bull_result_return.csv")
+write.csv(result.bull$risk, "bull_result_risk.csv")
+write.csv(result.bull$sharpe.ratio, "bull_result_sharperatio.csv")
+```
