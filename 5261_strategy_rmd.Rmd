@@ -1,0 +1,230 @@
+---
+title: "5261_strategy"
+date: "2019/5/10"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r setu_p}
+library("quadprog")
+rf <- 0.025
+exp.return.bear <- 0.05
+exp.return.bull <- 0.15
+setwd("~/Desktop/5010project6")
+source("5261_functions.r")
+dat.bull <- read.csv("returns_bull.csv", header = TRUE, as.is = TRUE)
+dat.bear <- read.csv("returns_bear.csv", header = TRUE, as.is = TRUE)
+
+n <- ncol(dat.bull) - 1
+```
+
+## Equal dollar
+```{r equal_dollar}
+equal.dollar <- function(traindat){
+  n <- ncol(traindat) - 1
+  return(rep(1/n, n))
+}
+
+(bull.equal.dollar <- iteration(dat.bull, equal.dollar))
+(bear.equal.dollar <- iteration(dat.bear, equal.dollar))
+```
+
+## Equal weighted risk
+```{r equal_risk}
+library(riskParityPortfolio)
+equal.risk <- function(traindat){
+  cov_mat <- cov(traindat[,-1])
+  riskweight <- riskParityPortfolio(cov_mat)$w
+  return(riskweight)
+}
+(bull.equal.risk <- iteration(dat.bull, equal.risk))
+(bear.equal.risk <- iteration(dat.bear, equal.risk))
+```
+
+## Markovwiz: Min. variance
+```{r mvp}
+min.variance <- function(traindat){
+  n<-ncol(traindat)-1
+  mu <- colMeans(traindat[,-1])
+  sigma <- cov(traindat[,-1])
+  muP = sdP = seq(-0.03, 0.03, length = 10000) # target portfolio return
+  weight <- matrix(0, nrow = 10000, ncol = n) # storage for portfolio weights
+  for (i in 1:length(muP)){
+    result <- solve.QP(Dmat = 2*sigma, dvec = rep(0,n),
+                       Amat <- cbind(rep(1,n), mu), bvec = c(1, muP[i]), meq = 2)
+    sdP[i] <- sqrt(result$value)
+    weight[i,] <- result$solution
+  } # find the optimal portfolios
+#  sharpe <- (muP-rf)/sdP # Sharpe's ratios
+  ind2 <- (sdP == min(sdP))
+  minvar.weight <- weight [ind2, ]
+  return(minvar.weight)
+}
+
+(bull.min.variance <- iteration(dat.bull, min.variance))
+(bear.min.variance <- iteration(dat.bear, min.variance))
+
+```
+
+## Markovwiz: tangent portfolio
+```{r tangent_portfolio}
+tangent.port <- function(traindat){
+  n<-ncol(traindat)-1
+  mu <- colMeans(traindat[, -1])
+  sigma <- cov(traindat[, -1])
+  muP = sdP = seq(-0.03, 0.03, length = 10000) # target portfolio return
+  weight <- matrix(0, nrow = 10000, ncol = n) # storage for portfolio weights
+  for (i in 1:length(muP)){
+    result <- solve.QP(Dmat = 2*sigma, dvec = rep(0,n),
+    Amat <- cbind(rep(1,n), mu), bvec = c(1, muP[i]), meq = 2)
+    sdP[i] <- sqrt(result$value)
+    weight[i,] <- result$solution
+  } # find the optimal portfolios
+  sharpe <- (muP-rf/365)/sdP # Sharpe's ratios
+  ind3 <- (sharpe == max(sharpe)) # find maximum Sharpe's ratio
+  mpvweight <- weight[ind3, ]
+  return(mpvweight)
+}
+
+(bull.tangent <- iteration(dat.bull, tangent.port))
+(bear.tangent <- iteration(dat.bear, tangent.port))
+```
+
+## Markovwiz: tangent portfolio with risk-free asset
+```{r mvp_with_rf}
+tangent_with_rf.bear <- function(traindat, expected.return = exp.return.bear){
+  weight <- tangent.port(traindat)
+  mu <- colMeans(traindat[,-1])
+  result <- list(stocks = weight,
+                 rf = (expected.return/365 - weight %*% mu)/(rf/365 - weight %*% mu))
+  return(result)
+}
+
+tangent_with_rf.bull <- function(traindat, expected.return = exp.return.bull){
+  weight <- tangent.port(traindat)
+  mu <- colMeans(traindat[,-1])
+  result <- list(stocks = weight,
+                 rf = (expected.return/365 - weight %*% mu)/(rf/365 - weight %*% mu))
+  return(result)
+}
+
+(bull.tangent.with.rf <- iteration(dat.bull, tangent_with_rf.bull, rf.include = TRUE))
+(bear.tangent.with.rf <- iteration(dat.bear, tangent_with_rf.bear, rf.include = TRUE))
+```
+
+## PCA
+```{r pca}
+#PCA
+bull.pca <- princomp(dat.bull[,-1])
+bear.pca <- princomp(dat.bear[,-1])
+bull.rotations<-apply(bull.pca[[2]],2,as.vector)
+bear.rotations<-apply(bear.pca[[2]],2,as.vector)
+
+#Select PCs that their cumulative var is larger than 80%,get return data.
+bullpca<-dat.bull[,1:12]
+bullpca[,2:12]<-as.matrix(dat.bull[,-1])%*%(bull.rotations[,1:11])
+
+bearpca<-dat.bear[,1:7]
+bearpca[,2:7]<-as.matrix(dat.bear[,-1])%*%(bear.rotations[,1:6])
+bullpca.equal.dollar<-iteration(bullpca, equal.dollar)
+bearpca.equal.dollar<-iteration(bearpca, equal.dollar)
+bullpca.equal.risk<-iteration(as.data.frame(bullpca), equal.risk)
+bearpca.equal.risk<-iteration(as.data.frame(bearpca), equal.risk)
+bullpca.min.variance<-iteration(bullpca, min.variance)
+bearpca.min.variance<-iteration(bearpca, min.variance)
+bullpca.tangent<-iteration(bullpca, tangent.port)
+bearpca.tangent<-iteration(bearpca, tangent.port)
+bullpca.tangent.with.rf<-iteration(bullpca, tangent_with_rf.bull, rf.include = TRUE)
+bearpca.tangent.with.rf<-iteration(bearpca, tangent_with_rf.bear, rf.include = TRUE)
+```
+
+```{r output_results}
+############bear###########
+result.bear <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+result.bear$return <- rbind(bear.equal.dollar$Return,
+                            bear.equal.risk$Return,
+                            bear.min.variance$Return,
+                            bear.tangent$Return,
+                            bear.tangent.with.rf$Return)
+result.bear$risk <- rbind(bear.equal.dollar$Risk,
+                            bear.equal.risk$Risk,
+                            bear.min.variance$Risk,
+                            bear.tangent$Risk,
+                            bear.tangent.with.rf$Risk)
+result.bear$sharpe.ratio <- rbind(bear.equal.dollar$sharpe.ratio,
+                                  bear.equal.risk$sharpe.ratio,
+                                  bear.min.variance$sharpe.ratio,
+                                  bear.tangent$sharpe.ratio,
+                                  bear.tangent.with.rf$sharpe.ratio)
+write.csv(result.bear$return, "bear_result_return.csv", row.names = FALSE)
+write.csv(result.bear$risk, "bear_result_risk.csv", row.names = FALSE)
+write.csv(result.bear$sharpe.ratio, "bear_result_sharperatio.csv", row.names = FALSE)
+##PCA
+result.bearpca <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+result.bearpca$return <- rbind(bearpca.equal.dollar$Return,
+                            bearpca.equal.risk$Return,
+                            bearpca.min.variance$Return,
+                            bearpca.tangent$Return,
+                            bearpca.tangent.with.rf$Return)
+result.bearpca$risk <- rbind(bearpca.equal.dollar$Risk,
+                            bearpca.equal.risk$Risk,
+                            bearpca.min.variance$Risk,
+                            bearpca.tangent$Risk,
+                            bearpca.tangent.with.rf$Risk)
+result.bearpca$sharpe.ratio <- rbind(bearpca.equal.dollar$sharpe.ratio,
+                                  bearpca.equal.risk$sharpe.ratio,
+                                  bearpca.min.variance$sharpe.ratio,
+                                  bearpca.tangent$sharpe.ratio,
+                                  bearpca.tangent.with.rf$sharpe.ratio)
+write.csv(result.bearpca$return, "bearpca_result_return.csv", row.names = FALSE)
+write.csv(result.bearpca$risk, "bearpca_result_risk.csv", row.names = FALSE)
+write.csv(result.bearpca$sharpe.ratio, "bearpca_result_sharperatio.csv", row.names = FALSE)
+
+############bull###########
+result.bull <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+result.bull$return <- rbind(bull.equal.dollar$Return,
+                            bull.equal.risk$Return,
+                            bull.min.variance$Return,
+                            bull.tangent$Return,
+                            bull.tangent.with.rf$Return)
+result.bull$risk <- rbind(bull.equal.dollar$Risk,
+                            bull.equal.risk$Risk,
+                            bull.min.variance$Risk,
+                            bull.tangent$Risk,
+                            bull.tangent.with.rf$Risk)
+result.bull$sharpe.ratio <- rbind(bull.equal.dollar$sharpe.ratio,
+                                  bull.equal.risk$sharpe.ratio,
+                                  bull.min.variance$sharpe.ratio,
+                                  bull.tangent$sharpe.ratio,
+                                  bull.tangent.with.rf$sharpe.ratio)
+write.csv(result.bull$return, "bull_result_return.csv", row.names = FALSE)
+write.csv(result.bull$risk, "bull_result_risk.csv", row.names = FALSE)
+write.csv(result.bull$sharpe.ratio, "bull_result_sharperatio.csv", row.names = FALSE)
+###PCA
+result.bullpca <- list(return = NULL, risk=NULL, sharpe.ratio=NULL)
+result.bullpca$return <- rbind(bullpca.equal.dollar$Return,
+                            bullpca.equal.risk$Return,
+                            bullpca.min.variance$Return,
+                            bullpca.tangent$Return,
+                            bullpca.tangent.with.rf$Return)
+result.bullpca$risk <- rbind(bullpca.equal.dollar$Risk,
+                            bullpca.equal.risk$Risk,
+                            bullpca.min.variance$Risk,
+                            bullpca.tangent$Risk,
+                            bullpca.tangent.with.rf$Risk)
+result.bullpca$sharpe.ratio <- rbind(bullpca.equal.dollar$sharpe.ratio,
+                                  bullpca.equal.risk$sharpe.ratio,
+                                  bullpca.min.variance$sharpe.ratio,
+                                  bullpca.tangent$sharpe.ratio,
+                                  bullpca.tangent.with.rf$sharpe.ratio)
+write.csv(result.bullpca$return, "bullpca_result_return.csv", row.names = FALSE)
+write.csv(result.bullpca$risk, "bullpca_result_risk.csv", row.names = FALSE)
+write.csv(result.bullpca$sharpe.ratio, "bullpca_result_sharperatio.csv", row.names = FALSE)
+```

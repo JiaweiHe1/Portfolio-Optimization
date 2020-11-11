@@ -1,0 +1,155 @@
+---
+title: "EDA"
+output: html_document
+---
+
+
+```{r }
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+bull_data <- read.csv("bull_stock_return.csv", header = TRUE, as.is = TRUE)
+bull_data$date = as.Date(bull_data$date)
+bear_data <- read.csv("bear_stock_return.csv", header = TRUE, as.is = TRUE)
+bear_data$date = as.Date(bear_data$date)
+stock_info <- read.csv('Selected_Stocks.csv')[,c('Industry', 'Company', 'Symbol')]
+bull_sp_500 <- read.csv('sp500bull.csv')
+bull_sp_500$date = as.Date(bull_sp_500$date)
+bear_sp_500 <- read.csv('sp500bear.csv')
+bear_sp_500$date = as.Date(bear_sp_500$date)
+bull_sp_500_return <- data.frame(Date = bull_sp_500$Date[-1], 
+                                 return = (bull_sp_500$Adj.Close[-1] - bull_sp_500$Adj.Close[-nrow(bull_sp_500)])/bull_sp_500$Adj.Close[-nrow(bull_sp_500)])
+bear_sp_500_return <- data.frame(Date = bear_sp_500$Date[-1], 
+                                 return = (bear_sp_500$Adj.Close[-1] - bear_sp_500$Adj.Close[-nrow(bear_sp_500)])/bear_sp_500$Adj.Close[-nrow(bear_sp_500)])
+
+rf = 0.025
+```
+
+
+## visualize S&P 500
+
+
+```{r}
+par(mfrow= c(2,1),oma=c(0,0,2,0))
+
+plot(bull_sp_500$Date, bull_sp_500$Adj.Close, type = "l", main = 'Bull Market')
+plot(bear_sp_500$Date, bear_sp_500$Adj.Close, type = "l", main = 'Bear Market')
+title('S&P 500 Index', outer = T)
+dev.off()
+```
+
+
+## Pairwise Correlation
+
+
+```{r}
+library(corrplot)
+corrplot(cor(bull_data[,-1]), method = 'circle', tl.col = 'black', type = "upper", number.cex = .4, 
+         tl.pos = 'lt', tl.cex = 0.4)
+
+corrplot(cor(bear_data[,-1]), add = TRUE, method = 'circle', tl.col = 'black', type = "lower", tl.pos = 'n', 
+         number.cex = .4, lower.col = "black", tl.cex = 0.4)
+
+```
+
+
+## calculate annual return, sd, sharpe ratio, beta
+
+
+```{r}
+##bear market
+bear_annual <- bear_data[1:252,]
+#annual return
+annual_return <- function(vec) {prod(vec+1) - 1}
+bear_annual_return <- apply(bear_annual[, -1], 2, annual_return)
+bear_sd_return <- sqrt(diag(cov(bear_annual[, -1])))
+#sd
+bear_annual_sd <- sqrt(252)*bear_sd_return
+#sharpe ratio
+bear_sharpe_ratio <- (bear_annual_return - rf) / bear_annual_sd
+#beta
+bear_joined <- bear_annual %>% inner_join(bear_sp_500_return, by = c('date'='Date'))
+bear_cov_mat <- cov(bear_joined[,-1])
+bear_market_var <- bear_cov_mat['return', 'return']
+bear_cov <- bear_cov_mat[ncol(bear_cov_mat), -ncol(bear_cov_mat)]
+bear_beta <- bear_cov/bear_market_var
+#summary table
+df_bear <- stock_info %>% 
+  inner_join(
+    data.frame(stock = names(bear_annual_return), 
+               bear_annual_return, 
+               bear_annual_sd, 
+               bear_sharpe_ratio, 
+               Beta = bear_beta),
+    by = c('Symbol' = 'stock')) %>% 
+  arrange(desc(bear_sharpe_ratio))
+```
+
+
+```{r}
+##bull market
+bull_2017 <- bull_data[1:250,]
+#annual return
+bull_annual_return <- apply(bull_2017[, -1], 2, annual_return)
+#sd
+bull_sd_return <- sqrt(diag(cov(bull_2017[, -1])))
+bull_annual_sd <- sqrt(250)*bull_sd_return
+#sharpe ratio
+bull_sharpe_ratio <- (bull_annual_return - rf) / bull_annual_sd
+#beta
+bull_joined <- bull_2017 %>% inner_join(bull_sp_500_return, by = c('date'='Date'))
+bull_cov_mat <- cov(bull_joined[,-1])
+bull_market_var <- bull_cov_mat['return', 'return']
+bull_cov <- bull_cov_mat[ncol(bull_cov_mat), -ncol(bull_cov_mat)]
+bull_beta <- bull_cov/bull_market_var
+#summary table
+df_bull <- stock_info %>% 
+  inner_join(
+    data.frame(stock = names(bull_annual_return), bull_annual_return, bull_annual_sd, bull_sharpe_ratio, Beta = bull_beta),
+    by = c('Symbol' = 'stock')) %>% 
+  arrange(desc(bull_sharpe_ratio))
+```
+
+
+## visualize return, risk and sharpe ratio
+
+
+```{r}
+ggplot(df_bear, 
+       aes(bear_annual_sd, bear_annual_return, 
+           label = paste(Symbol,round(bear_sharpe_ratio, 3)), 
+           col = Industry)) + 
+  geom_text() +
+  scale_y_continuous('Annual Return', 
+                     breaks = c(-0.7, -0.35, -0.2, 0, 0.025, 0.2),
+                     labels = c(-0.7, -0.35, -0.2, 0, paste('rf = ', rf), 0.2)) +
+  scale_x_continuous('Annual SD', 
+                     limits = c(0, 0.9)) +
+  ggtitle('Return vs. Risk in Bear Market') +
+  labs(subtitle = "points: Stock & Sharpe ratio") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.6),plot.subtitle = element_text(hjust = 0.4))
+
+ggplot(df_bull, 
+       aes(bull_annual_sd, bull_annual_return, 
+           label = paste(Symbol,round(bull_sharpe_ratio, 3)), 
+           col = Industry)) + 
+  geom_text(cex = 3) +
+  scale_y_continuous('Annual return', 
+                     breaks = c(-0.3, 0, 0.025, 0.3, 0.6, 0.9),
+                     labels = c(-0.3, 0, paste('rf = ', rf), 0.3, 0.6, 0.9)) +
+  scale_x_continuous('Annual SD', 
+                     limits = c(0.05, 0.3))+
+  ggtitle('Return vs. Risk in Bull Market')+
+  labs(subtitle = "points: Stock & Sharpe ratio") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.6),plot.subtitle = element_text(hjust = 0.4))
+
+```
+
+
+
+
+
+
+
